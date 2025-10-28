@@ -11,3 +11,25 @@ Additionally, `rr.nvim` provides convenient keymaps for quick replacements:
 - `<leader>rl` → Replace Local (within the current buffer)  
 - `<leader>rg` → Replace Global (within the buffer's directory)  
 - `<leader>rgv` → Replace Global Recursive (within the buffer's directory and all subdirectories)
+
+# Installation
+
+Installing the plugin is very easy: simply place the rrnvim.lua file inside your lua/ directory in Neovim and use on `init.lua`:
+``` lua
+require("rrnvim").setup()
+```
+
+# Keymap Customization
+
+You can also override the default keymaps by passing your own values to `setup()`:
+
+``` lua
+require("rrnvim").setup({
+    replace_local = "<leader>sl",           -- overrides the default <leader>rl
+    replace_global = "<leader>sg",          -- overrides the default <leader>rg
+    replace_global_recursive = "<leader>sv" -- overrides the default <leader>rgv
+})
+
+```
+
+
