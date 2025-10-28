@@ -1,116 +1,179 @@
 local M = {}
 
-if 1 ~= vim.fn.has "nvim-0.9.0" then
-  vim.notify("rr.nvim requires at least nvim-0.9.0.", vim.log.levels.WARN)
-  return
+local defaults = {
+    old_word = "",
+    new_word = "",
+    context = nil,
+    recursive = false,
+    verbosity = nil,
+}
+
+local function find_rr_on_system()
+  return vim.fn.executable("rr") == 1
 end
 
-local function rr_on_system()
-  return vim.fn.executable("rr")
+local function rr_notify(arg)
+  vim.notify("rr.nvim: " .. arg, vim.log.levels.INFO, {timeout=2000})
 end
 
-local function reload_buffer(path)
-  -- Procura o buffer que corresponde ao arquivo
-  local buf = vim.fn.bufnr(path)
-  if buf ~= -1 then
-    -- Recarrega o buffer sem perder modificações externas
-    vim.api.nvim_buf_call(buf, function()
-      vim.cmd("e!")
-    end)
-    vim.notify("Arquivo recarregado: " .. path, vim.log.levels.INFO)
-  end
-end
-
-local function get_selection()
-  local s_pos = vim.fn.getpos("'<")
-  local e_pos = vim.fn.getpos("'>")
-
-  local start_line, start_col = s_pos[2], s_pos[3] - 1
-  local end_line, end_col = e_pos[2], e_pos[3]
-
-  local lines = vim.api.nvim_buf_get_lines(0, start_line - 1, end_line, false)
-  if #lines == 0 then return "" end
-
-  lines[1] = string.sub(lines[1], start_col + 1)
-  lines[#lines] = string.sub(lines[#lines], 1, end_col)
-
-  return table.concat(lines, "\n")
-end
-
-local function on_enter(buf, win, callback)
-  vim.api.nvim_buf_set_keymap(buf, 'i', '<CR>', '', {
-    noremap=true,
-    silent=true,
-    callback = function()
-      local content = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-      vim.api.nvim_win_close(win, true)
-      callback(table.concat(content, "\n"))
+local function run_rr(args)
+    local cmd = {'rr'}
+    for _, v in ipairs(args) do
+        if v ~= nil then
+            table.insert(cmd, v)
+        end
     end
-  })
+    return vim.fn.system(cmd)
 end
 
+function M.replace_for_this_directory(old_word, new_word, recursive)
+    local cwd = vim.fn.getcwd()
+    run_rr({old_word or defaults.old_word, new_word or defaults.new_word, cwd, recursive})
+end
 
-local function call_rr_replace(old_word, new_word, context)
-  local exe = "rr"
+local function get_selected_word()
+  local mode = vim.api.nvim_get_mode().mode
 
-  if vim.fn.executable(exe) == 0 then
-    vim.notify("rr.nvim: executable not found.", vim.log.levels.ERROR)
+  if mode ~= "v" and mode ~= "V" then
+    return nil
+  end
+
+  local save_reg = vim.fn.getreg('"')
+  local save_regtype = vim.fn.getregtype('"')
+
+  vim.cmd('normal! "vy')
+  local selection = vim.fn.getreg('v')
+
+  vim.fn.setreg('"', save_reg, save_regtype)
+
+  -- Remove espaços à esquerda até encontrar a primeira letra/número
+  selection = selection:gsub("^%s*(%S.*)", "%1")
+
+  return selection
+end
+
+local function get_new_word()
+  return vim.fn.input("new word: ")
+end
+
+local function global_word_replace_recursive()
+  if not find_rr_on_system() then 
+    rr_notify("rr is not on system!")
+    return
+  end
+  
+  local old_word = get_selected_word() or ""
+  local new_word = get_new_word() or ""
+  local path = vim.api.nvim_buf_get_name(0)
+  local context = vim.fn.fnamemodify(vim.fn.resolve(path), ":p:h")
+
+  if old_word == "" then
+    rr_notify("No words selected.")
+    return
+  end
+  if new_word == "" then
+    rr_notify("No word to replace.")
+    return
+  end
+  if path == "" then
+    rr_notify("buffer is not associated with a file.")
     return
   end
 
-  local args = {old_word, new_word, context, "-r", "-v"}
+  run_rr({old_word, new_word, context, true})
 
-  local output = vim.fn.system(vim.list_extend({exe}, args))
-
-  for line in output:gmatch("[^\r\n]+") do
-    vim.notify(line, vim.log.levels.INFO)
-  end
-  reload_buffer(context)
-end
-
-function M.popup()
-  local old_word = get_selection()
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {""})
-
-  local width, height = 35, 1
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = "cursor",
-    width = width,
-    height = height,
-    row = 5,
-    col = 10,
-    style = "minimal",
-    focusable = true,
-    border = "rounded",
-    title = "rr.nvim: word to override " .. old_word,
-    title_pos = "center"
-  })
-
-  vim.api.nvim_buf_set_keymap(buf, 'i', '<ESC>', [[<Esc>:lua vim.api.nvim_win_close(0, true)<CR>]], {noremap=true, silent=true})
-
-  on_enter(buf, win, function(new_word)
-    local context = vim.fn.input("context: ")
-    if context == "this" or context == "" then
-      context = vim.api.nvim_buf_get_name(0)
-    end
-    call_rr_replace(old_word, new_word, context)
+  vim.api.nvim_buf_call(0, function()
+    vim.cmd("edit!")
   end)
 
-vim.cmd("startinsert")
-  vim.cmd("startinsert")
+  rr_notify("replacement completed and buffer reloaded.")
+
 end
 
+local function global_word_replace()
 
-
-function M.setup()
-  if rr_on_system() == 0 then
-    vim.schedule(function()
-      vim.notify("rrnvim: the rr executable is not on system!", vim.log.levels.ERROR)
-    end)
+  if not find_rr_on_system() then
+    rr_notify("rr is not on system!")
+    return
   end
-  vim.api.nvim_set_keymap('x', '<C-r>', [[:lua require("rrnvim").popup()<CR>]], { noremap = true, silent = true })
+
+  local old_word = get_selected_word() or ""
+  local new_word = get_new_word() or ""
+  local path = vim.api.nvim_buf_get_name(0)
+  local context = vim.fn.fnamemodify(vim.fn.resolve(path), ":p:h")
+
+  if old_word == "" then
+    rr_notify("No words selected.")
+    return
+  end
+  if new_word == "" then
+    rr_notify("No word to replace.")
+    return
+  end
+  if path == "" then
+    rr_notify("buffer is not associated with a file.")
+    return
+  end
+
+
+  run_rr({old_word, new_word, context})
+
+  vim.api.nvim_buf_call(0, function()
+    vim.cmd("edit!")
+  end)
+
+  rr_notify("replacement completed and buffer reloaded.")
+
+end
+
+local function local_word_replace()
+  if not find_rr_on_system() then
+    rr_notify("rr is not on system!")
+    return
+  end 
+  local old_word = get_selected_word()
+  vim.print("old word:" .. old_word)
+  local new_word = vim.fn.input("new word: ")
+  local buf_name = vim.api.nvim_buf_get_name(0)
+  if not old_word or old_word == "" then
+    vim.print("rr.nvim: no word selected")
+    return
+  end
+
+  if not new_word or new_word == "" then
+    vim.print("rr.nvim: no new word provided")
+    return
+  end
+
+  if buf_name == "" then
+    vim.print("rr.nvim: buffer has no file")
+    return
+  end
+  run_rr({old_word, new_word, buf_name})
+  rr_notify("word replaced successfully.")
+    vim.api.nvim_buf_call(0, function()
+    vim.cmd("edit!")
+  end)
+end
+
+function M.setup(opts)
+    opts = opts or {}
+    local rl = opts.replace_local or '<leader>rl'
+    local rg = opts.replace_global or '<leader>rg'
+    local rgv = opts.replace_global_recursive or '<leader>rgv'
+
+    vim.keymap.set('x', rl, local_word_replace)
+    vim.keymap.set('x', rg, global_word_replace)
+    vim.keymap.set('x', rgv, global_word_replace_recursive)
+
+    vim.api.nvim_create_user_command('RR', function(cmd_opts)
+        local fargs = cmd_opts.fargs
+        if opts.custom_rr then
+            opts.custom_rr(fargs)
+        else
+            run_rr(fargs)
+        end
+    end, { nargs = '*' })
 end
 
 return M
-
